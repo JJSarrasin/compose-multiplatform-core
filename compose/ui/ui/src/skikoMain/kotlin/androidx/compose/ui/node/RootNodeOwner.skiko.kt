@@ -61,6 +61,8 @@ import androidx.compose.ui.input.pointer.PointerInputEventProcessor
 import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.PositionCalculator
+import androidx.compose.ui.input.remote.RemoteFastScrollNode
+import androidx.compose.ui.input.remote.RemoteSwipeDirection
 import androidx.compose.ui.input.rotary.RotaryScrollEvent
 import androidx.compose.ui.layout.RootMeasurePolicy
 import androidx.compose.ui.layout.RulerProviderModifierElement
@@ -380,6 +382,11 @@ internal class RootNodeOwner(
 
     fun onRotaryEvent(event: RotaryScrollEvent): Boolean {
         return _owner.focusOwner.dispatchRotaryEvent(event)
+    }
+
+    // tvOS fork: the node that fast scrolls for a swipe in [direction], if any.
+    fun findRemoteFastScrollNode(direction: RemoteSwipeDirection): RemoteFastScrollNode? {
+        return _owner.focusOwner.findRemoteFastScrollNode(direction)
     }
 
     /**

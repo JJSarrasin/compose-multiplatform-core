@@ -34,6 +34,8 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerInputEvent
 import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.remote.RemoteFastScrollNode
+import androidx.compose.ui.input.remote.RemoteSwipeDirection
 import androidx.compose.ui.input.rotary.RotaryScrollEvent
 import androidx.compose.ui.platform.FrameRecomposer
 import androidx.compose.ui.platform.ProvidePlatformCompositionLocals
@@ -260,6 +262,17 @@ internal abstract class BaseComposeScene(
         inputHandler.cancelPointerInput()
     }
 
+    // tvOS fork: finds the node that fast scrolls for a swipe in [direction], from the focused item.
+    internal fun findRemoteFastScrollNode(direction: RemoteSwipeDirection): RemoteFastScrollNode? =
+        processFindRemoteFastScrollNode(direction)
+
+    // tvOS fork: runs a call made by the platform mediator on a remote fast scroll node, with
+    // invalidations postponed and a trampoline dispatch after it, like a key event.
+    internal fun <T> runRemoteInput(block: () -> T): T =
+        postponeInvalidation("BaseComposeScene:runRemoteInput") {
+            block().also { frameRecomposer.performTrampolineDispatch() }
+        }
+
     override fun sendKeyEvent(keyEvent: KeyEvent): Boolean =
         postponeInvalidation("BaseComposeScene:sendKeyEvent") {
             inputHandler.onKeyEvent(keyEvent).also {
@@ -307,6 +320,11 @@ internal abstract class BaseComposeScene(
 
     protected abstract fun processRotaryScrollEvent(event: RotaryScrollEvent): Boolean
 
+    // tvOS fork: the fast scroll node for a swipe, searched from the focused item.
+    protected abstract fun processFindRemoteFastScrollNode(
+        direction: RemoteSwipeDirection
+    ): RemoteFastScrollNode?
+
     protected abstract fun doMeasureAndLayout()
 
     protected abstract fun doDraw(canvas: Canvas)
@@ -321,3 +339,16 @@ internal val ComposeScene.lastKnownPointerPosition: Offset?
         this as BaseComposeScene
         return lastKnownPointerPosition
     }
+
+// tvOS fork: finds the node that fast scrolls for a swipe in [direction], if any.
+internal fun ComposeScene.findRemoteFastScrollNode(
+    direction: RemoteSwipeDirection
+): RemoteFastScrollNode? =
+    (this as? BaseComposeScene)?.findRemoteFastScrollNode(direction)
+
+/**
+ * tvOS fork: runs [block] with invalidations postponed and a trampoline dispatch after it, like
+ * a key event. Scenes that are not a [BaseComposeScene] just run it.
+ */
+internal fun <T> ComposeScene.runRemoteInput(block: () -> T): T =
+    if (this is BaseComposeScene) runRemoteInput(block) else block()
