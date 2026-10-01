@@ -1456,6 +1456,16 @@ internal class ComposeSceneMediator(
                 hadController = touchOracle.isAvailable,
                 startedAt = now,
             )
+        // Fingers already on the pad join the mode: they pan it, can stop it and never swipe. Their
+        // first sample is a baseline, and a finger that rests while the drive key is held does not
+        // stop the drive (the physics ignores rest while held).
+        var adopted = false
+        for (state in indirectTouches.values) {
+            if (state.fastScrollLifted) continue
+            state.fastScrollContact = true
+            adopted = true
+        }
+        if (adopted) physics.onTouchDown(now)
         // The burst of the swipe that entered the mode is replaced by it.
         cancelMomentum("fast scroll")
         swipeDebug {
@@ -1489,10 +1499,12 @@ internal class ComposeSceneMediator(
         if (session.hadController && !session.controllerLost && !touchOracle.isAvailable) {
             session.controllerLost = true
             swipeDebug { "FAST controller lost" }
-            if (session.holdKeyId != null) {
-                session.holdKeyId = null
-                physics.onHoldReleased(timestamp)
-            }
+            releaseFastScrollHold(session, timestamp)
+        }
+        if (session.holdKeyId != null && timestamp - session.startedAt > FAST_HOLD_MAX_S) {
+            // The release of the key never arrived: brake and exit instead of driving for ever.
+            swipeDebug { "FAST hold watchdog" }
+            releaseFastScrollHold(session, timestamp)
         }
         for (state in indirectTouches.values.toList()) {
             if (!state.fastScrollContact || state.fastScrollLifted) continue
@@ -1521,6 +1533,14 @@ internal class ComposeSceneMediator(
             session.exitReason = fastScrollExitReason(physics.hitEnd, physics.velocity)
             attemptFastScrollExit(session)
         }
+    }
+
+    /** Stops the held key from driving the mode; the release of that key is swallowed once. */
+    private fun releaseFastScrollHold(session: FastScrollSession, timestamp: Double) {
+        val keyId = session.holdKeyId ?: return
+        session.holdKeyId = null
+        swallowedFastScrollKeyIds.add(keyId)
+        session.physics.onHoldReleased(timestamp)
     }
 
     private fun feedFastScrollContact(
@@ -1593,6 +1613,8 @@ internal class ComposeSceneMediator(
     private fun finishFastScroll(session: FastScrollSession, restored: Boolean) {
         if (fastScroll !== session) return
         fastScroll = null
+        // The key that drove the mode may still be down: its release is not owed to the scene.
+        session.holdKeyId?.let { swallowedFastScrollKeyIds.add(it) }
         touchOracle.endSampling(session.samplingToken)
         swipeChain.reset()
         swipeDebug {
@@ -1914,6 +1936,7 @@ internal class ComposeSceneMediator(
 
     fun sceneWillDisappear() {
         // No keyboard manager to stop on tvOS
+        forceEndFastScroll("disappear", restore = false)
         cancelMomentum("disappear")
     }
 
@@ -2055,6 +2078,12 @@ internal class ComposeSceneMediator(
                         // Any press that starts while fast scrolling runs is a new one: the held
                         // key, which drives the mode, only ever repeats.
                         session.physics.stop()
+                        session.holdKeyId?.let { held ->
+                            // The key that drove the mode is still down: it no longer drives, and
+                            // its release is swallowed.
+                            session.holdKeyId = null
+                            if (held != keyId) swallowedFastScrollKeyIds.add(held)
+                        }
                         swipeDebug { "FAST stop by=press key=${event.key}" }
                         if (isMenu) {
                             // Back is delivered below as usual, to the item that has focus again.
@@ -2106,6 +2135,8 @@ internal class ComposeSceneMediator(
                             CoroutineScope(coroutineContext).launch {
                                 while (isActive) {
                                     delay(hold.nextDelayMs())
+                                    // Fast scrolling replaces the repeats of every other key too.
+                                    if (fastScroll != null) continue
                                     if (
                                         hold.shouldTryFastEntry() &&
                                             tryEnterFastScrollFromHold(event.key, keyId, hold.moves)
