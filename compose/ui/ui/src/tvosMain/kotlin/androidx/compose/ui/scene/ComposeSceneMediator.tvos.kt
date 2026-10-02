@@ -1320,7 +1320,9 @@ internal class ComposeSceneMediator(
         if (state.flingTrackingClosed) return
         val burst = momentumBurst ?: return
         if (burstSource !== state) return
-        burst.raiseRows(swipeRows(state))
+        val rows = swipeRows(state)
+        burst.raiseRows(rows)
+        swipeChain.onSwipeRows(rows)
     }
 
     /**
@@ -1378,6 +1380,7 @@ internal class ComposeSceneMediator(
             "MOMENTUM plan rows=$rows travel=${state.maxTravel} boost=$boost " +
                 "startOffset=${debugStartOffset(state)} t=${debugSeconds(timestamp)}"
         }
+        swipeChain.onSwipeRows(rows)
         swipeChain.onLift(timestamp)
         if (burstSource === state) momentumBurst?.raiseRows(rows)
         if (swipeChain.shouldEnterFastMode()) tryEnterFastScrollFromSwipe(key)
@@ -1545,7 +1548,7 @@ internal class ComposeSceneMediator(
         if (fastScroll != null || !isFocusEnabled) return
         val node = findFastScrollNode(key, "swipe")
         if (node != null) {
-            startFastScroll(node, key, "swipe", swipeChain.focusMoves, holdKeyId = null)
+            startFastScroll(node, key, "swipe", swipeChain.momentumMoves, holdKeyId = null)
         } else if (momentumBurst != null) {
             pendingFastEntryKey = key
             fastEntryRetries.reset()
@@ -1567,7 +1570,7 @@ internal class ComposeSceneMediator(
         }
         val node = findFastScrollNode(key, "swipe") ?: return
         pendingFastEntryKey = null
-        startFastScroll(node, key, "swipe", swipeChain.focusMoves, holdKeyId = null)
+        startFastScroll(node, key, "swipe", swipeChain.momentumMoves, holdKeyId = null)
     }
 
     /**
@@ -1639,7 +1642,8 @@ internal class ComposeSceneMediator(
         // The burst of the swipe that entered the mode is replaced by it.
         cancelMomentum("fast scroll")
         swipeDebug {
-            "FAST enter source=$source key=${directionName(key)} moves=$moves v=${physics.velocity}"
+            val label = if (source == "swipe") "momentumMoves" else "moves"
+            "FAST enter source=$source key=${directionName(key)} $label=$moves v=${physics.velocity}"
         }
         return true
     }
@@ -1804,9 +1808,10 @@ internal class ComposeSceneMediator(
         swipeDebug {
             val gap = swipeChain.currentGap
             "CHAIN swipes=$swipes moves=${swipeChain.focusMoves} " +
-                "gap=${if (gap == Double.MAX_VALUE) "none" else "${gap * 1000.0}ms"}"
+                "momentumMoves=${swipeChain.momentumMoves} gap=${if (gap == Double.MAX_VALUE) "none" else "${gap * 1000.0}ms"}"
         }
         val rows = swipeRows(state)
+        swipeChain.onSwipeRows(rows)
         val cancellations = momentumCancellations
         val consumed = onKeyboardEvent(KeyEvent(key, KeyEventType.KeyDown))
         onKeyboardEvent(KeyEvent(key, KeyEventType.KeyUp))
