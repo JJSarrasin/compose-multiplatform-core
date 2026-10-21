@@ -59,10 +59,29 @@ internal const val MOMENTUM_TICK_LOOKAHEAD_S = 0.008
  * lift. Provisional.
  */
 internal const val SWIPE_LIFT_DISTANCE = 0.20f
-/** Intercept of the rows to travel fit, in rows. Fitted, provisional. */
-internal const val MOMENTUM_ROWS_INTERCEPT = 0.31f
+/**
+ * Intercept of the rows to travel fit, in rows. The travel alone runs the ladder 2, 3, 4… from
+ * [MOMENTUM_SINGLE_ROW_TRAVEL] on, one row per 0.25 pad unit as the fitted slope says: a moderate
+ * swipe moves two or three rows, as on the native UI side by side on device. The native fit itself
+ * (0.31) gives three rows at the single-row limit, which moves more items than the native UI for a
+ * moderate swipe; what a fast flick earns beyond that comes from its speed ([MOMENTUM_SPEED_MIN]).
+ * Provisional.
+ */
+internal const val MOMENTUM_ROWS_INTERCEPT = -0.69f
 /** Slope of the rows to travel fit, in rows per pad unit. Fitted, provisional. */
 internal const val MOMENTUM_ROWS_PER_TRAVEL = 3.93f
+/**
+ * Peak finger speed along the swipe axis, in pad units per second, from which the speed of a swipe
+ * sizes its momentum: a swipe this fast earns two rows, and one more row for every
+ * [MOMENTUM_SPEED_PER_ROW] beyond, up to [MOMENTUM_MAX_ROWS]. A swipe earns the larger of the rows
+ * its travel and its speed give. The native UI carries a fast flick much further than a moderate
+ * swipe of the same length, which the travel alone cannot tell apart. A traverse ends between 9 and
+ * 29 units per second on the device, so the scale spans that range. Provisional, pending a
+ * calibration against the speeds the MOMENTUM plan debug line reports.
+ */
+internal const val MOMENTUM_SPEED_MIN = 8f
+/** Peak speed in pad units per second for each row beyond two. See [MOMENTUM_SPEED_MIN]. */
+internal const val MOMENTUM_SPEED_PER_ROW = 4f
 /** Most rows a single swipe moves focus. Measured range is 3 to 7. */
 internal const val MOMENTUM_MAX_ROWS = 7
 /** Most rows a chained swipe moves focus once the chain boost is applied. Measured maximum. */

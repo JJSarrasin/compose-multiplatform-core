@@ -34,28 +34,61 @@ class TvSwipeMomentumTest {
 
     @Test
     fun rowsGrowWithTravelAndCap() {
-        assertEquals(3, momentumRowsFor(0.8f, 0.6f))
-        assertEquals(4, momentumRowsFor(0.8f, 0.9f))
-        assertEquals(5, momentumRowsFor(0.8f, 1.2f))
+        // One row per 0.254 pad unit from two rows at the single-row limit, capped at seven
+        assertEquals(2, momentumRowsFor(0.8f, 0.6f))
+        assertEquals(2, momentumRowsFor(0.8f, 0.81f))
+        assertEquals(3, momentumRowsFor(0.8f, 0.82f))
+        assertEquals(3, momentumRowsFor(0.8f, 0.9f))
+        assertEquals(4, momentumRowsFor(0.8f, 1.2f))
+        assertEquals(6, momentumRowsFor(0.8f, 1.6f))
+        assertEquals(7, momentumRowsFor(0.8f, 1.9f))
         assertEquals(7, momentumRowsFor(0.8f, 2.5f))
     }
+
     @Test
     fun startOffsetGatesMomentumAtItsThreshold() {
         val below = MOMENTUM_MIN_START_OFFSET - 0.01f
         assertEquals(1, momentumRowsFor(below, 1.2f))
-        assertEquals(5, momentumRowsFor(MOMENTUM_MIN_START_OFFSET, 1.2f))
+        assertEquals(4, momentumRowsFor(MOMENTUM_MIN_START_OFFSET, 1.2f))
         assertEquals(1, momentumRowsFor(0.0f, 1.2f))
         assertEquals(1, momentumRowsFor(-0.5f, 1.2f))
         assertEquals(1, momentumRowsFor(MOMENTUM_MIN_START_OFFSET, 0.59f))
-        assertEquals(3, momentumRowsFor(MOMENTUM_MIN_START_OFFSET, 0.6f))
+        assertEquals(2, momentumRowsFor(MOMENTUM_MIN_START_OFFSET, 0.6f))
     }
 
     @Test
     fun deviceStartOffsetsOfBothDirectionsEarnMomentum() {
         // Measured on an Apple TV 4K: downward swipes start about 0.45 above the centre, upward
         // ones about 0.9 below it. Both must keep their momentum.
-        assertEquals(5, momentumRowsFor(0.45f, 1.2f))
-        assertEquals(5, momentumRowsFor(0.9f, 1.2f))
+        assertEquals(4, momentumRowsFor(0.45f, 1.2f))
+        assertEquals(4, momentumRowsFor(0.9f, 1.2f))
+    }
+
+    @Test
+    fun speedRowsClimbOneRowPerStepFromTheMinimum() {
+        assertEquals(0, speedRowsFor(0f))
+        assertEquals(0, speedRowsFor(MOMENTUM_SPEED_MIN - 0.1f))
+        assertEquals(2, speedRowsFor(MOMENTUM_SPEED_MIN))
+        assertEquals(3, speedRowsFor(MOMENTUM_SPEED_MIN + MOMENTUM_SPEED_PER_ROW))
+        assertEquals(7, speedRowsFor(MOMENTUM_SPEED_MIN + 5 * MOMENTUM_SPEED_PER_ROW))
+    }
+
+    @Test
+    fun fastFlickOutrunsItsTravel() {
+        // A moderate swipe keeps the rows of its travel; a fast flick of the same length goes
+        // further, capped at the single swipe maximum.
+        assertEquals(2, momentumRowsFor(0.8f, 0.7f, peakSpeed = 6f))
+        assertEquals(5, momentumRowsFor(0.8f, 0.7f, peakSpeed = 20f))
+        assertEquals(MOMENTUM_MAX_ROWS, momentumRowsFor(0.8f, 1.6f, peakSpeed = 60f))
+        // The travel still sets the floor of a slow long swipe.
+        assertEquals(6, momentumRowsFor(0.8f, 1.6f, peakSpeed = 5f))
+    }
+
+    @Test
+    fun speedDoesNotBypassTheMomentumGates() {
+        assertEquals(1, momentumRowsFor(0.8f, 0.5f, peakSpeed = 30f))
+        assertEquals(1, momentumRowsFor(0.1f, 1.2f, peakSpeed = 30f))
+        assertEquals(1, momentumRowsFor(null, 1.2f, peakSpeed = 30f))
     }
 
     @Test
@@ -85,7 +118,7 @@ class TvSwipeMomentumTest {
             Key.DirectionRight to -0.8f,
             Key.DirectionLeft to 0.8f,
         )) {
-            assertEquals(4, momentumRowsFor(swipeStartOffset(key, origin), 0.9f))
+            assertEquals(3, momentumRowsFor(swipeStartOffset(key, origin), 0.9f))
             assertEquals(1, momentumRowsFor(swipeStartOffset(key, -origin), 0.9f))
         }
     }

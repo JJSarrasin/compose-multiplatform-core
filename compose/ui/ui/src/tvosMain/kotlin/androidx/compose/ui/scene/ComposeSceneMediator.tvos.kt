@@ -137,7 +137,7 @@ import platform.UIKit.setAccessibilityElements
 // the outer ring of arrow buttons only becomes one once it crossed into the centre pad. That is
 // what a straight swipe from one edge of the ring to the opposite edge does, and what a circular
 // drag around the ring never does. A swipe that passes the gates below moves focus once, wherever
-// it started, then keeps focus moving for as many rows as the finger travelled along its axis, and
+// it started, then keeps focus moving for as many rows as its travel and its speed earn, and
 // item by item while the finger glides on; that momentum is in TvSwipeMomentum.
 // A contact that crosses the distance gate later than this is a drag, not a swipe: it still moves
 // focus, and keeps moving it as the finger glides on (DRAG_STEP_TRAVEL), but it earns no momentum,
@@ -268,6 +268,12 @@ private class IndirectTouchState(
     var maxTravel: Float = 0f
     var maxTravelSample: Offset? = null
     var maxTravelTime: Double = 0.0
+
+    /**
+     * The highest speed the finger reached along the axis of its armed key, toward that key, in pad
+     * units per second, since it armed: what its momentum is sized from besides its travel.
+     */
+    var peakSpeed: Float = 0f
 
     /**
      * Set when the contact crossed the distance gate slower than [SWIPE_MAX_DURATION_S]: its moves
@@ -1350,6 +1356,23 @@ internal class ComposeSceneMediator(
             // A finger resting where it went furthest: a turn starts when it leaves that point.
             state.maxTravelTime = timestamp
         }
+        state.flingSamples
+            .velocityAlong(
+                isHorizontalFlingKey(key),
+                FLING_VELOCITY_WINDOW_S,
+                PEAK_SPEED_MIN_SPAN_S,
+            )
+            ?.let {
+                val speed = signedSpeedAlongKey(key, it)
+                if (speed > state.peakSpeed) state.peakSpeed = speed
+            }
+        // A flick the pad samples only two or three times never fills the window above: its
+        // average speed since the swipe started stands in for it.
+        val elapsed = timestamp - state.startTimestamp
+        if (elapsed >= AVERAGE_SPEED_MIN_ELAPSED_S) {
+            val average = (travel / elapsed).toFloat()
+            if (average > state.peakSpeed) state.peakSpeed = average
+        }
     }
 
     /**
@@ -1450,7 +1473,11 @@ internal class ComposeSceneMediator(
             } else {
                 null
             }
-        return momentumRowsFor(startOffset, state.maxTravel)
+        return momentumRowsFor(
+            startOffset = startOffset,
+            travel = state.maxTravel,
+            peakSpeed = state.peakSpeed,
+        )
     }
 
     /** The start offset of [state] for the debug log, `NaN` when unknown. */
@@ -1485,8 +1512,8 @@ internal class ComposeSceneMediator(
         val boost = swipeChain.currentBoost()
         val rows = if (state.liftArmed) 1 else boostedRows(swipeRows(state), boost)
         swipeDebug {
-            "MOMENTUM plan rows=$rows travel=${state.maxTravel} boost=$boost " +
-                "startOffset=${debugStartOffset(state)} t=${debugSeconds(timestamp)}"
+            "MOMENTUM plan rows=$rows travel=${state.maxTravel} speed=${state.peakSpeed} " +
+                "boost=$boost startOffset=${debugStartOffset(state)} t=${debugSeconds(timestamp)}"
         }
         swipeChain.onSwipeRows(rows)
         swipeChain.onLift(timestamp)
@@ -1543,6 +1570,9 @@ internal class ComposeSceneMediator(
         state.armedAt = timestamp
         state.maxTravel = maxOf(absDx, absDy)
         state.liftArmed = true
+        if (elapsed >= AVERAGE_SPEED_MIN_ELAPSED_S) {
+            state.peakSpeed = (state.maxTravel / elapsed).toFloat()
+        }
         swipeDebug {
             "SWIPE lift-arm ${directionName(key)} d=($dx, $dy) " +
                 "t=${debugSeconds(timestamp)} elapsed=${elapsed * 1000.0}ms"
@@ -2061,6 +2091,7 @@ internal class ComposeSceneMediator(
         state.startTimestamp = timestamp
         state.lastSignificantMoveTime = timestamp
         state.maxTravel = 0f
+        state.peakSpeed = 0f
     }
 
     /**
