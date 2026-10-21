@@ -23,6 +23,15 @@ package androidx.compose.ui.scene
 
 /** Decay time constant of the momentum position curve. Fitted on UITableView, provisional. */
 internal const val MOMENTUM_TAU_S = 0.07
+/**
+ * Decay time constant of the momentum of a swipe that follows a momentum swipe in its chain. With
+ * [MOMENTUM_TAU_S] a burst delivers its rows in about 150 ms while the swipes of a quick run come
+ * every 390 ms or so on device: focus stood still two thirds of the time, felt as a hitch at every
+ * swipe. Spread over about 300 ms, the rows of one swipe run until the next one takes over, with
+ * what is left carried over to it. The native UI keeps a run moving by entering fast scrolling,
+ * which only runs on containers with Modifier.remoteFastScroll. Provisional.
+ */
+internal const val MOMENTUM_CHAIN_TAU_S = 0.16
 /** Bias added to the row count to get the asymptote of the momentum curve (n = rows + bias). */
 internal const val MOMENTUM_ROW_BIAS = 0.5
 /** Travel in pad units below which a swipe moves exactly one row, whatever its start. Measured. */
@@ -84,8 +93,19 @@ internal const val MOMENTUM_SPEED_MIN = 8f
 internal const val MOMENTUM_SPEED_PER_ROW = 4f
 /** Most rows a single swipe moves focus. Measured range is 3 to 7. */
 internal const val MOMENTUM_MAX_ROWS = 7
-/** Most rows a chained swipe moves focus once the chain boost is applied. Measured maximum. */
+/**
+ * Most rows a chained swipe earns once the chain boost is applied. Measured maximum. The rows
+ * carried over from the burst it replaces come on top.
+ */
 internal const val MOMENTUM_MAX_ROWS_CHAINED = 8
+/**
+ * Longest time between two steps of a burst, in seconds: the tail of the curve runs slower, most of
+ * all for [MOMENTUM_CHAIN_TAU_S]. Kept under the spacing that tells the steps of one run from
+ * separate presses, as an app may time them (the steady key repeat is [KEY_REPEAT_STEADY_MS],
+ * separate presses come about 250 ms apart): on device a twelfth of the steps of a chained burst
+ * came up to 250 ms apart without this. Provisional.
+ */
+internal const val MOMENTUM_MAX_STEP_INTERVAL_S = 0.12
 /** Most momentum steps emitted on one tick. Provisional, drop to 1 if steps get lost. */
 internal const val MOMENTUM_MAX_STEPS_PER_TICK = 2
 /** Retries of a momentum step when the scene is busy. Provisional guess. */
@@ -94,10 +114,40 @@ internal const val MOMENTUM_BUSY_RETRIES = 1
 /** Longest gap between a lift and the next touch for swipes to still chain. Fitted. */
 internal const val CHAIN_MAX_GAP_S = 1.0
 /**
- * Row multiplier of a chained swipe that follows quickly. Native evidence is about 1.05x, so the
- * boost stays off (1.0) until it is re-measured; the code path and the chain tracker remain.
+ * Ratio of the displacement along the axis of a series of swipes to the displacement across it at
+ * which a contact that continues the series, toward its direction, swipes in that direction: up to
+ * 45 degrees off the axis. An isolated swipe still needs SWIPE_AXIS_DOMINANCE. Quick flicks of a
+ * run drift off the axis: on device a fifth of them, 27 to 45 degrees off, never armed under the
+ * isolated rule. A stroke back against the series, the finger returning between two flicks, keeps
+ * the isolated rule. Provisional.
  */
-internal const val CHAIN_BOOST = 1.0f
+internal const val SERIES_AXIS_DOMINANCE = 1f
+/**
+ * Travel in pad units from which a quick swipe that follows a momentum swipe in its chain earns
+ * momentum, wherever it starts: the distance at which a contact that never armed still swipes at
+ * lift ([SWIPE_LIFT_DISTANCE]). Repeated quick flicks are short strokes that start wherever the
+ * previous one left the finger, and the briefest are sampled once or twice before the pad goes
+ * empty, so their travel is known only up to that last sample. Held to the gates of an isolated
+ * swipe, a fifth of them moved one row in the middle of a run of seven or eight, felt on device as
+ * a hitch. Provisional.
+ */
+internal const val CHAIN_SINGLE_ROW_TRAVEL = 0.20f
+/**
+ * Longest contact, from its BEGAN to its last sample, that counts as quick in a chain of momentum
+ * swipes whatever its measured speed: the briefest flicks are sampled too sparsely for a speed. The
+ * quick flicks of a run last 30 to 75 ms on device. Only a swipe that follows a momentum swipe is
+ * judged by it. Provisional.
+ */
+internal const val CHAIN_QUICK_CONTACT_S = 0.08
+/**
+ * Row multiplier of a momentum swipe that follows the previous one in the same direction within
+ * [CHAIN_BOOST_MAX_GAP_S], up to [MOMENTUM_MAX_ROWS_CHAINED]; a single-row swipe stays one row. On
+ * the native UI the rows of each swipe barely grow along a chain (about 1.05x measured): a chain
+ * goes far because its third swipe enters fast scrolling, which only runs on containers with
+ * Modifier.remoteFastScroll. The boost lets a quick chain carry further where fast scrolling does
+ * not run. Provisional, felt on device.
+ */
+internal const val CHAIN_BOOST = 1.3f
 /** Longest lift to touch gap that earns [CHAIN_BOOST]. Measured, low confidence. */
 internal const val CHAIN_BOOST_MAX_GAP_S = 0.45
 

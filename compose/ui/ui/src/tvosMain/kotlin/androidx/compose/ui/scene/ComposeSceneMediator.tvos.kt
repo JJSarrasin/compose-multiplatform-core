@@ -275,6 +275,15 @@ private class IndirectTouchState(
      */
     var peakSpeed: Float = 0f
 
+    /** Whether the contact's swipe continues its chain right after a momentum swipe. */
+    var followsMomentumSwipe: Boolean = false
+
+    /**
+     * Whether the contact lasted at most [CHAIN_QUICK_CONTACT_S] from its BEGAN to its last sample,
+     * known once it lifted.
+     */
+    var quickContact: Boolean = false
+
     /**
      * Set when the contact crossed the distance gate slower than [SWIPE_MAX_DURATION_S]: its moves
      * follow the finger and it earns no momentum at lift.
@@ -679,6 +688,8 @@ internal class ComposeSceneMediator(
     // sampling session it holds of its own, since it outlives that contact. The chain of
     // consecutive swipes survives contacts, so a quick second swipe can be boosted.
     private var momentumBurst: TvMomentumBurst? = null
+    /** When the last focus move of the burst in progress went out, its own move included. */
+    private var lastBurstStepAt = 0.0
     private var burstSource: IndirectTouchState? = null
     private var burstBusyRetries = 0
     private var isSamplingFling = false
@@ -1278,7 +1289,11 @@ internal class ComposeSceneMediator(
         val absDy = abs(dy)
         val dominant = maxOf(absDx, absDy)
         val other = minOf(absDx, absDy)
-        if (dominant < distance || dominant < SWIPE_AXIS_DOMINANCE * other) {
+        // A contact that continues a series of swipes may drift off the series' axis.
+        val seriesKey = if (state.usesOracle) seriesKeyOf(state, dx, dy) else null
+        if (seriesKey != null) {
+            if (displacementAlongKey(seriesKey, dx, dy) < distance) return
+        } else if (dominant < distance || dominant < SWIPE_AXIS_DOMINANCE * other) {
             return
         }
         // A contact that started on the ring only swipes once it crossed into the centre pad, the
@@ -1294,7 +1309,9 @@ internal class ComposeSceneMediator(
         // is an upward swipe. The fallback dy is a UIKit relative view location, positive
         // downward as usual for screen coordinates, so a positive dy there is a downward swipe.
         val key =
-            if (absDx >= absDy) {
+            if (seriesKey != null) {
+                seriesKey
+            } else if (absDx >= absDy) {
                 if (dx > 0) Key.DirectionRight else Key.DirectionLeft
             } else if (state.usesOracle) {
                 if (dy > 0) Key.DirectionUp else Key.DirectionDown
@@ -1310,7 +1327,10 @@ internal class ComposeSceneMediator(
             // the distance gate the two sources share.
             state.maxTravel = dominant / screenDensity.density / FALLBACK_DP_PER_PAD_UNIT
         }
-        swipeDebug { "SWIPE armed ${directionName(key)}${if (slow) " drag" else ""}" }
+        swipeDebug {
+            "SWIPE armed ${directionName(key)}${if (slow) " drag" else ""}" +
+                if (seriesKey != null) " series" else ""
+        }
     }
 
     /**
@@ -1381,6 +1401,13 @@ internal class ComposeSceneMediator(
      */
     private fun travelAlongKey(state: IndirectTouchState, key: Key, sample: Offset): Float =
         displacementAlongKey(key, sample.x - state.origin.x, sample.y - state.origin.y)
+
+    /**
+     * The direction of the series of swipes the contact [state] continues, if its displacement
+     * [dx], [dy] runs that way within [SERIES_AXIS_DOMINANCE].
+     */
+    private fun seriesKeyOf(state: IndirectTouchState, dx: Float, dy: Float): Key? =
+        seriesSwipeKey(swipeChain.continuingKey(state.beginTimestamp), dx, dy)
 
     /** Raises the rows of the burst [state] started to what its travel has earned by now. */
     private fun updateMomentum(state: IndirectTouchState) {
@@ -1462,7 +1489,8 @@ internal class ComposeSceneMediator(
      * unknown and it earns no momentum.
      */
     private fun swipeRows(state: IndirectTouchState): Int {
-        if (state.liftArmed || state.dragOnly) return 1
+        if (state.dragOnly) return 1
+        if (state.liftArmed && !state.followsMomentumSwipe) return 1
         val key = state.armedKey ?: return 1
         val startOffset =
             if (state.usesOracle) {
@@ -1477,6 +1505,8 @@ internal class ComposeSceneMediator(
             startOffset = startOffset,
             travel = state.maxTravel,
             peakSpeed = state.peakSpeed,
+            followsMomentumSwipe = state.followsMomentumSwipe,
+            quickContact = state.quickContact,
         )
     }
 
@@ -1497,6 +1527,8 @@ internal class ComposeSceneMediator(
             // The empty pad calls this on every tick until the ENDED arrives, so the logging and
             // the lift-time arm happen once, and a contact that lift-armed is not armed twice.
             state.liftSeen = true
+            state.quickContact =
+                state.lastSampleTime - state.beginTimestamp <= CHAIN_QUICK_CONTACT_S
             logIndirectLift(state, timestamp)
             if (
                 state.verdict == IndirectTouchVerdict.CANDIDATE ||
@@ -1510,9 +1542,10 @@ internal class ComposeSceneMediator(
         state.flingTrackingClosed = true
         val key = state.dispatchedKey ?: return
         val boost = swipeChain.currentBoost()
-        val rows = if (state.liftArmed) 1 else boostedRows(swipeRows(state), boost)
+        val rows = boostedRows(swipeRows(state), boost)
         swipeDebug {
             "MOMENTUM plan rows=$rows travel=${state.maxTravel} speed=${state.peakSpeed} " +
+                "chained=${state.followsMomentumSwipe} quick=${state.quickContact} " +
                 "boost=$boost startOffset=${debugStartOffset(state)} t=${debugSeconds(timestamp)}"
         }
         swipeChain.onSwipeRows(rows)
@@ -1549,7 +1582,15 @@ internal class ComposeSceneMediator(
         val dx = last.x - state.origin.x
         val dy = last.y - state.origin.y
         val elapsed = state.lastSampleTime - state.startTimestamp
-        if (!isLiftArmSwipe(dx, dy, elapsed, SWIPE_MAX_DURATION_S, SWIPE_AXIS_DOMINANCE)) return
+        val seriesKey = seriesKeyOf(state, dx, dy)
+        val liftSwipe =
+            if (seriesKey != null) {
+                displacementAlongKey(seriesKey, dx, dy) >= SWIPE_LIFT_DISTANCE &&
+                    elapsed <= SWIPE_MAX_DURATION_S
+            } else {
+                isLiftArmSwipe(dx, dy, elapsed, SWIPE_MAX_DURATION_S, SWIPE_AXIS_DOMINANCE)
+            }
+        if (!liftSwipe) return
         if (isClickpadPressOverlapping(state.beginTimestamp, timestamp)) {
             state.verdict = IndirectTouchVerdict.CANCELLED
             swipeDebug { "SWIPE cancelled reason=press" }
@@ -1558,7 +1599,9 @@ internal class ComposeSceneMediator(
         val absDx = abs(dx)
         val absDy = abs(dy)
         val key =
-            if (absDx >= absDy) {
+            if (seriesKey != null) {
+                seriesKey
+            } else if (absDx >= absDy) {
                 if (dx > 0) Key.DirectionRight else Key.DirectionLeft
             } else if (dy > 0) {
                 Key.DirectionUp
@@ -1568,7 +1611,8 @@ internal class ComposeSceneMediator(
         state.verdict = IndirectTouchVerdict.ARMED
         state.armedKey = key
         state.armedAt = timestamp
-        state.maxTravel = maxOf(absDx, absDy)
+        state.maxTravel =
+            if (seriesKey != null) displacementAlongKey(seriesKey, dx, dy) else maxOf(absDx, absDy)
         state.liftArmed = true
         if (elapsed >= AVERAGE_SPEED_MIN_ELAPSED_S) {
             state.peakSpeed = (state.maxTravel / elapsed).toFloat()
@@ -1609,7 +1653,10 @@ internal class ComposeSceneMediator(
         // The curve is read half a frame ahead: a step due just after this tick goes out now rather
         // than a whole frame late.
         val due =
-            minOf(burst.stepsDue(timestamp + MOMENTUM_TICK_LOOKAHEAD_S), MOMENTUM_MAX_STEPS_PER_TICK)
+            minOf(
+                burst.stepsDue(timestamp + MOMENTUM_TICK_LOOKAHEAD_S, lastBurstStepAt),
+                MOMENTUM_MAX_STEPS_PER_TICK,
+            )
         for (i in 0 until due) {
             if (!emitBurstStep(burst, timestamp, "MOMENTUM")) return
         }
@@ -1650,6 +1697,7 @@ internal class ComposeSceneMediator(
             return false
         }
         burst.onStepEmitted()
+        lastBurstStepAt = timestamp
         swipeChain.onFocusMoved()
         burstBusyRetries = 0
         return true
@@ -2022,6 +2070,7 @@ internal class ComposeSceneMediator(
         state.travelSteps = 1
         state.dragNextTravel = state.maxTravel + DRAG_STEP_TRAVEL
         val swipes = swipeChain.onSwipeDispatched(key, state.beginTimestamp)
+        state.followsMomentumSwipe = swipeChain.followsMomentumSwipe
         swipeDebug {
             val gap = swipeChain.currentGap
             "CHAIN swipes=$swipes moves=${swipeChain.focusMoves} " +
@@ -2034,9 +2083,27 @@ internal class ComposeSceneMediator(
         onKeyboardEvent(KeyEvent(key, KeyEventType.KeyUp))
         if (cancellations != momentumCancellations) return
         if (consumed) swipeChain.onFocusMoved()
+        // A swipe in the same direction takes over what the burst it replaces still owed.
+        val replaced = momentumBurst
+        val carried =
+            if (replaced != null && replaced.key == key) {
+                replaced.remaining.coerceAtMost(MOMENTUM_MAX_ROWS_CHAINED)
+            } else {
+                0
+            }
         cancelMomentum("replaced")
         if (!consumed) return
-        momentumBurst = TvMomentumBurst(key, CACurrentMediaTime(), rows)
+        val startedAt = CACurrentMediaTime()
+        lastBurstStepAt = startedAt
+        momentumBurst =
+            TvMomentumBurst(
+                key = key,
+                startedAt = startedAt,
+                rows = rows,
+                tau = if (state.followsMomentumSwipe) MOMENTUM_CHAIN_TAU_S else MOMENTUM_TAU_S,
+                carried = carried,
+            )
+        if (carried > 0) swipeDebug { "MOMENTUM carried=$carried" }
         burstSource = state
         isSamplingFling = true
         flingSamplingToken = touchOracle.beginSampling()
