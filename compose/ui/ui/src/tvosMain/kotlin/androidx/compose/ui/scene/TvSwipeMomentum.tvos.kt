@@ -16,6 +16,7 @@
 package androidx.compose.ui.scene
 
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.remote.RemoteSwipe
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.floor
@@ -125,6 +126,8 @@ internal class TvMomentumBurst(
     private val tau: Double = MOMENTUM_TAU_S,
     /** Rows left unemitted by the burst this one replaced, owed on top of this swipe's own. */
     val carried: Int = 0,
+    /** What the key events of the burst carry: the swipe of the contact that started it. */
+    val swipe: RemoteSwipe? = null,
 ) {
     var rows: Int = rows + carried
         private set

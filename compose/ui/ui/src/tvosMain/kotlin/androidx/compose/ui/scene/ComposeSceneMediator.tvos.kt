@@ -49,7 +49,9 @@ import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.remote.RemoteFastScrollExitAnchor
 import androidx.compose.ui.input.remote.RemoteFastScrollNode
+import androidx.compose.ui.input.remote.RemoteSwipe
 import androidx.compose.ui.input.remote.RemoteSwipeDirection
+import androidx.compose.ui.input.remote.newRemoteSwipe
 import androidx.compose.ui.navigationevent.TvBackNavigationEventInput
 import androidx.compose.ui.platform.AccessibilityMediator
 import androidx.compose.ui.platform.CUPERTINO_TOUCH_SLOP
@@ -243,6 +245,9 @@ private class IndirectTouchState(
     val usesOracle: Boolean,
     var verdict: IndirectTouchVerdict,
 ) {
+    /** What the key events of this contact's swipe carry, momentum included. */
+    val swipe: RemoteSwipe = newRemoteSwipe()
+
     /** Position the rest detection measures against, and when it was last left. */
     var restAnchor: Offset = origin
     var lastSignificantMoveTime: Double = startTimestamp
@@ -1678,10 +1683,11 @@ internal class ComposeSceneMediator(
     private fun emitBurstStep(burst: TvMomentumBurst, timestamp: Double, tag: String): Boolean {
         val key = burst.key
         swipeDebug { "$tag step ${burst.emitted + 1}/${burst.rows} t=${debugSeconds(timestamp)}" }
-        val consumed = onKeyboardEvent(KeyEvent(key, KeyEventType.KeyDown))
+        val consumed =
+            onKeyboardEvent(KeyEvent(key, KeyEventType.KeyDown, nativeEvent = burst.swipe))
         // The KeyDown can cancel the burst re-entrantly, but the KeyUp is still owed to balance
         // it, so it is sent before checking whether the burst is still the one in progress.
-        onKeyboardEvent(KeyEvent(key, KeyEventType.KeyUp))
+        onKeyboardEvent(KeyEvent(key, KeyEventType.KeyUp, nativeEvent = burst.swipe))
         // A dispatch runs key event handlers, which can dispose this mediator or cancel the burst.
         if (momentumBurst !== burst) return false
         if (!consumed) {
@@ -2079,8 +2085,9 @@ internal class ComposeSceneMediator(
         val rows = swipeRows(state)
         swipeChain.onSwipeRows(rows)
         val cancellations = momentumCancellations
-        val consumed = onKeyboardEvent(KeyEvent(key, KeyEventType.KeyDown))
-        onKeyboardEvent(KeyEvent(key, KeyEventType.KeyUp))
+        val consumed =
+            onKeyboardEvent(KeyEvent(key, KeyEventType.KeyDown, nativeEvent = state.swipe))
+        onKeyboardEvent(KeyEvent(key, KeyEventType.KeyUp, nativeEvent = state.swipe))
         if (cancellations != momentumCancellations) return
         if (consumed) swipeChain.onFocusMoved()
         // A swipe in the same direction takes over what the burst it replaces still owed.
@@ -2102,6 +2109,7 @@ internal class ComposeSceneMediator(
                 rows = rows,
                 tau = if (state.followsMomentumSwipe) MOMENTUM_CHAIN_TAU_S else MOMENTUM_TAU_S,
                 carried = carried,
+                swipe = state.swipe,
             )
         if (carried > 0) swipeDebug { "MOMENTUM carried=$carried" }
         burstSource = state
