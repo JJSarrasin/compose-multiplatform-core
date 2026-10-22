@@ -1027,8 +1027,28 @@ internal class ComposeSceneMediator(
                     dispatchArmedIndirectTouch(state, touch.timestamp)
                 }
                 handleIndirectLift(state, touch.timestamp)
+                dispatchTapIfAny(state, touch.timestamp)
             }
         }
+    }
+
+    /**
+     * Sends a contact that lifted without swiping as a tap around the focused item: no move went
+     * out for it, no clickpad press came with it, and no momentum was running, which a touch stops
+     * rather than taps.
+     */
+    private fun dispatchTapIfAny(state: IndirectTouchState, timestamp: Double) {
+        val unswiped =
+            when (state.verdict) {
+                IndirectTouchVerdict.PENDING,
+                IndirectTouchVerdict.CANDIDATE,
+                IndirectTouchVerdict.RING_CANDIDATE -> true
+                else -> false
+            }
+        if (!unswiped || momentumBurst != null) return
+        if (isClickpadPressOverlapping(state.beginTimestamp, timestamp)) return
+        val handled = scene.runRemoteInput { scene.dispatchRemoteTap() }
+        swipeDebug { "TAP handled=$handled t=${debugSeconds(timestamp)}" }
     }
 
     /**
